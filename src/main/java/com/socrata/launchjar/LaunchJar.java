@@ -11,14 +11,20 @@ import java.lang.reflect.Method;
 import java.util.Arrays;
 
 public class LaunchJar {
-    private static class ManifestableURLClassLoader extends URLClassLoader {
-        ManifestableURLClassLoader(URL[] urls, ClassLoader parent) {
-            super(urls, parent);
+    private static class JARClassLoader extends URLClassLoader {
+        private File jar;
+
+        JARClassLoader(File jar, ClassLoader parent) throws Exception {
+            super(new URL[] { jar.toURI().toURL() }, parent);
+            this.jar = jar;
+        }
+
+        File getJar() {
+            return jar;
         }
 
         Manifest loadManifest() throws Exception {
             URL resource = findResource("META-INF/MANIFEST.MF");
-            System.out.println(resource);
             if(resource == null) return null;
             InputStream in = resource.openStream();
             try {
@@ -29,16 +35,13 @@ public class LaunchJar {
         }
     }
 
-    private static Method findMethod(String jar) throws Exception {
-        File file = new File(jar);
-        URL url = file.toURI().toURL();
-        ManifestableURLClassLoader cl = new ManifestableURLClassLoader(new URL[] { url }, null);
-        Manifest mf = cl.loadManifest();
-        if(mf == null) throw new Exception("No manifest defined in " + jar);
+    private static Method findMethod(JARClassLoader jarCL) throws Exception {
+        Manifest mf = jarCL.loadManifest();
+        if(mf == null) throw new Exception("No manifest defined in " + jarCL.getJar());
         Attributes attribs = mf.getMainAttributes();
         String mainClass = attribs.getValue(Attributes.Name.MAIN_CLASS);
-        if(mainClass == null) throw new Exception("No Main-Class defined in " + jar + "'s manifest");
-        Class<?> cls = cl.loadClass(mainClass);
+        if(mainClass == null) throw new Exception("No Main-Class defined in " + jarCL.getJar() + "'s manifest");
+        Class<?> cls = jarCL.loadClass(mainClass);
         return cls.getMethod("main", String[].class);
     }
 
@@ -47,8 +50,12 @@ public class LaunchJar {
             System.err.println("Usage: java -jar launchjar.jar JARFILE ARG...");
             System.exit(1);
         }
+
+        JARClassLoader cl = new JARClassLoader(new File(args[0]), Thread.currentThread().getContextClassLoader());
+        Thread.currentThread().setContextClassLoader(cl);
+        Method method = findMethod(cl);
         try {
-            findMethod(args[0]).invoke(null, new Object[] { Arrays.copyOfRange(args, 1, args.length) });
+            method.invoke(null, new Object[] { Arrays.copyOfRange(args, 1, args.length) });
         } catch (InvocationTargetException e) {
             throw e.getCause();
         }
